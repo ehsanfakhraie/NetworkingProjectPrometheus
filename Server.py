@@ -3,6 +3,7 @@ import socket
 import threading
 import time
 from abc import ABC, abstractmethod
+import prometheus_client
 
 HOST = '127.0.0.1'
 PORT = 8686
