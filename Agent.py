@@ -1,4 +1,5 @@
 import datetime
+import json
 import socket
 import threading
 import time
@@ -35,20 +36,42 @@ class Agent:
         """
         pass
 
-    def data_to_binary(self, data):
+    def format_data(self, data):
         """
-        Convert data to binary format
+        Check if data is a dictionary and format it to a json string and binary
         :param data: data to be converted
         :return: binary data
         """
+        if not isinstance(data, dict):
+            raise TypeError("Data is not a dictionary")
+
+        # Add agent name and timestamp to data
+        data = {
+            'name': self.name,
+            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'data': data
+        }
+        data = json.dumps(data)
         return data.encode('utf-8')
 
     def send_data(self):
         """
         Send data received from get_data function via socket
-        :return: Void
+        :return: false if data is not a dictionary
         """
-        self.socket.sendall(self.data_to_binary(self.get_data()))
+        data = self.get_data()
+        try:
+            data = self.format_data(data)
+        except TypeError as e:
+            self.log(f"Error while formatting data: {e}", 'error')
+            return False
+
+        if data is not None:
+            self.socket.sendall(data)
+            return True
+        else:
+            self.log(f"Data is not in correct format", 'error')
+            return False
 
     def agent_service(self):
         """
@@ -57,8 +80,8 @@ class Agent:
         """
         self.log(f"Starting agent {self.name}")
         while True:
-            self.send_data()
-            self.log(f"Data sent to server")
+            if self.send_data():
+                self.log(f"Data sent to server")
             time.sleep(self.interval)
 
     def start_agent(self):
@@ -98,10 +121,22 @@ class TestAgent(Agent):
         return f"Test data from {self.name}"
 
 
+class SystemMemoryAgent(Agent):
+    def __init__(self, name):
+        super().__init__()
+        self.name = name
+        self.interval = 1
+
+    def get_data(self):
+        return {"memory": self.get_memory_usage()}
+
+    def get_memory_usage(self):
+        import psutil
+        return psutil.virtual_memory().percent
+
+
 # run test agent
 if __name__ == '__main__':
-    test_agent = TestAgent("Test Agent 1")
-    test_agent.start_agent()
 
-    test_agent = TestAgent("Test Agent 2")
-    test_agent.start_agent()
+    system_memory_agent = SystemMemoryAgent("System Memory Agent")
+    system_memory_agent.start_agent()

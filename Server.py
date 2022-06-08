@@ -50,7 +50,12 @@ class Server:
         :return: Void
         """
         while True:
-            data = conn.recv(1024)
+            try:
+                data = conn.recv(1024)
+            except ConnectionResetError:
+                self.log(f"Client {addr} disconnected")
+                self.clients.remove(conn)
+                break
             if not data:
                 break
             self.log(f"Received data from {addr}: {data.decode('utf-8')}")
