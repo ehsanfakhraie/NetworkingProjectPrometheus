@@ -4,6 +4,7 @@ import socket
 import threading
 import time
 from abc import ABC, abstractmethod
+from enum import Enum
 
 HOST = '127.0.0.1'
 PORT = 8686
@@ -11,13 +12,24 @@ PORT = 8686
 
 # Main agent class with basic functionalities
 class Agent:
-    socket = None
+    # type of data to be sent to server [Gauge, Counter, Histogram, Summary]
+    data_type = None
+
+    # Enum for data types
+    class DataType(Enum):
+        Gauge = 'gauge'
+        Counter = 'counter'
+        Histogram = 'histogram'
+        Summary = 'summary'
+
     # name of agent
     name = ''
+
     # time interval to send data
     interval = 0
 
     def __init__(self):
+        self.socket = None
         self.initial_socket()
 
     def initial_socket(self):
@@ -26,7 +38,35 @@ class Agent:
             :return: Void
         """
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self.socket.connect((HOST, PORT))
+        # try to connect to server every 5 seconds
+        while True:
+            try:
+                self.socket.connect((HOST, PORT))
+                self.send_initial_data()
+                break
+            except ConnectionRefusedError:
+                self.log(f"Connection refused, trying again in 5 seconds")
+                time.sleep(5)
+
+    def send_initial_data(self):
+        """
+        Send initial data to server
+        :return: Void
+        """
+
+        self.log(f"Sending initial data to server")
+
+        self.send_data(self.get_initial_data(), initial=True)
+
+    def get_initial_data(self):
+        """
+        Get initial data to be sent to server
+        :return: data to be sent
+        """
+        return {
+            "name": self.name,
+            "type": self.data_type.value,
+        }
 
     @abstractmethod
     def get_data(self):
@@ -36,7 +76,7 @@ class Agent:
         """
         pass
 
-    def format_data(self, data):
+    def format_data(self, data, initial=False):
         """
         Check if data is a dictionary and format it to a json string and binary
         :param data: data to be converted
@@ -45,29 +85,40 @@ class Agent:
         if not isinstance(data, dict):
             raise TypeError("Data is not a dictionary")
 
+        # data should contain name and value keys
+        if 'name' not in data or 'value' not in data:
+            if not initial:
+                raise TypeError("Data is not in correct format")
+
         # Add agent name and timestamp to data
-        data = {
-            'name': self.name,
-            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            'data': data
-        }
+        if not initial:
+            data = {
+                'name': self.name,
+                'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                'data': data,
+                'type': self.data_type.value
+            }
         data = json.dumps(data)
         return data.encode('utf-8')
 
-    def send_data(self):
+    def send_data(self, data, initial=False):
         """
         Send data received from get_data function via socket
         :return: false if data is not a dictionary
         """
-        data = self.get_data()
         try:
-            data = self.format_data(data)
+            data = self.format_data(data, initial)
         except TypeError as e:
             self.log(f"Error while formatting data: {e}", 'error')
             return False
 
         if data is not None:
-            self.socket.sendall(data)
+            try:
+                self.socket.sendall(data)
+            except ConnectionResetError:
+                self.log(f"Connection reset, trying to reconnect")
+                self.initial_socket()
+                self.socket.sendall(data)
             return True
         else:
             self.log(f"Data is not in correct format", 'error')
@@ -80,7 +131,7 @@ class Agent:
         """
         self.log(f"Starting agent {self.name}")
         while True:
-            if self.send_data():
+            if self.send_data(self.get_data()):
                 self.log(f"Data sent to server")
             time.sleep(self.interval)
 
@@ -122,13 +173,15 @@ class TestAgent(Agent):
 
 
 class SystemMemoryAgent(Agent):
+    data_type = Agent.DataType.Gauge
+    name = 'memoryssss'
+
     def __init__(self, name):
         super().__init__()
-        self.name = name
         self.interval = 1
 
     def get_data(self):
-        return {"memory": self.get_memory_usage()}
+        return {"name": "memory", "value": self.get_memory_usage()}
 
     def get_memory_usage(self):
         import psutil
@@ -137,6 +190,5 @@ class SystemMemoryAgent(Agent):
 
 # run test agent
 if __name__ == '__main__':
-
     system_memory_agent = SystemMemoryAgent("System Memory Agent")
     system_memory_agent.start_agent()
