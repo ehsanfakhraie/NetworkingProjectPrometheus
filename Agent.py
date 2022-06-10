@@ -1,10 +1,12 @@
 import datetime
 import json
+import os
 import socket
 import threading
 import time
 from abc import ABC, abstractmethod
 from enum import Enum
+import psutil
 
 HOST = '127.0.0.1'
 PORT = 8686
@@ -12,25 +14,17 @@ PORT = 8686
 
 # Main agent class with basic functionalities
 class Agent:
-    # type of data to be sent to server [Gauge, Counter, Histogram, Summary]
-    data_type = None
-
-    # Enum for data types
-    class DataType(Enum):
-        Gauge = 'gauge'
-        Counter = 'counter'
-        Histogram = 'histogram'
-        Summary = 'summary'
-
     # name of agent
     name = ''
 
     # time interval to send data
     interval = 0
 
-    def __init__(self):
+    def __init__(self, name, interval):
         self.socket = None
         self.initial_socket()
+        self.name = name
+        self.interval = interval
 
     def initial_socket(self):
         """
@@ -42,41 +36,24 @@ class Agent:
         while True:
             try:
                 self.socket.connect((HOST, PORT))
-                self.send_initial_data()
                 break
             except ConnectionRefusedError:
                 self.log(f"Connection refused, trying again in 5 seconds")
                 time.sleep(5)
 
-    def send_initial_data(self):
+    def get_system_data(self):
         """
-        Send initial data to server
-        :return: Void
+            Get basic system data
+            :return: dictionary of system data
         """
+        data = {'hostname': socket.gethostname(), 'os': os.name, 'cpu_count': psutil.cpu_count(),
+                'cpu_percent': psutil.cpu_percent(), 'memory_percent': psutil.virtual_memory().percent,
+                'disk_percent': psutil.disk_usage('/').percent,
+                'network_bytes_sent': psutil.net_io_counters().bytes_sent}
 
-        self.log(f"Sending initial data to server")
+        return data
 
-        self.send_data(self.get_initial_data(), initial=True)
-
-    def get_initial_data(self):
-        """
-        Get initial data to be sent to server
-        :return: data to be sent
-        """
-        return {
-            "name": self.name,
-            "type": self.data_type.value,
-        }
-
-    @abstractmethod
-    def get_data(self):
-        """
-            Abstract method for system information retrieval
-            To be implemented for different agents
-        """
-        pass
-
-    def format_data(self, data, initial=False):
+    def format_data(self, data):
         """
         Check if data is a dictionary and format it to a json string and binary
         :param data: data to be converted
@@ -85,29 +62,22 @@ class Agent:
         if not isinstance(data, dict):
             raise TypeError("Data is not a dictionary")
 
-        # data should contain name and value keys
-        if 'name' not in data or 'value' not in data:
-            if not initial:
-                raise TypeError("Data is not in correct format")
-
         # Add agent name and timestamp to data
-        if not initial:
-            data = {
-                'name': self.name,
-                'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                'data': data,
-                'type': self.data_type.value
-            }
+        data = {
+            'name': self.name,
+            'timestamp': datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'data': data,
+        }
         data = json.dumps(data)
         return data.encode('utf-8')
 
-    def send_data(self, data, initial=False):
+    def send_data(self, data):
         """
         Send data received from get_data function via socket
         :return: false if data is not a dictionary
         """
         try:
-            data = self.format_data(data, initial)
+            data = self.format_data(data)
         except TypeError as e:
             self.log(f"Error while formatting data: {e}", 'error')
             return False
@@ -115,7 +85,7 @@ class Agent:
         if data is not None:
             try:
                 self.socket.sendall(data)
-            except ConnectionResetError:
+            except (ConnectionResetError, ConnectionAbortedError):
                 self.log(f"Connection reset, trying to reconnect")
                 self.initial_socket()
                 self.socket.sendall(data)
@@ -131,7 +101,7 @@ class Agent:
         """
         self.log(f"Starting agent {self.name}")
         while True:
-            if self.send_data(self.get_data()):
+            if self.send_data(self.get_system_data()):
                 self.log(f"Data sent to server")
             time.sleep(self.interval)
 
@@ -161,34 +131,7 @@ class Agent:
             print(f"[ERROR][{timestamp}]  {self.name} : {message}")
 
 
-# Test implementation of Agent class
-class TestAgent(Agent):
-    def __init__(self, name):
-        super().__init__()
-        self.name = name
-        self.interval = 1
-
-    def get_data(self):
-        return f"Test data from {self.name}"
-
-
-class SystemMemoryAgent(Agent):
-    data_type = Agent.DataType.Gauge
-    name = 'memoryssss'
-
-    def __init__(self, name):
-        super().__init__()
-        self.interval = 1
-
-    def get_data(self):
-        return {"name": "memory", "value": self.get_memory_usage()}
-
-    def get_memory_usage(self):
-        import psutil
-        return psutil.virtual_memory().percent
-
-
 # run test agent
 if __name__ == '__main__':
-    system_memory_agent = SystemMemoryAgent("System Memory Agent")
-    system_memory_agent.start_agent()
+    agent = Agent('test', 1)
+    agent.start_agent()

@@ -9,41 +9,39 @@ from prometheus_client import start_http_server, Summary, Gauge, Counter, Histog
 HOST = '127.0.0.1'
 PORT = 8686
 
+# Defalut metrics
+# CPU count
+cpu_count = Gauge('cpu_count', 'CPU count', ['agent_name'])
+# CPU usage
+cpu_usage = Gauge('cpu_usage', 'CPU usage', ['agent_name'])
+# memory usage
+memory_usage = Gauge('memory_usage', 'Memory usage', ['agent_name'])
+# disk usage
+disk_usage = Gauge('disk_usage', 'Disk usage', ['agent_name'])
+
 
 class Client:
     """
     Class for storing client data including name, data type, prometheus_client object, conn
     """
 
-    def __init__(self, initial_data, conn, addr):
-        self.name = initial_data['name']
-        self.data_type = initial_data['type']
+    def __init__(self, conn, addr):
         self.conn = conn
         self.addr = addr
-
-        if self.data_type == 'gauge':
-            self.prometheus_client = Gauge(self.name, 'description')
-        elif self.data_type == 'counter':
-            self.prometheus_client = Counter(self.name, 'description')
-        elif self.data_type == 'histogram':
-            self.prometheus_client = Histogram(self.name, 'description')
-        elif self.data_type == 'summary':
-            self.prometheus_client = Summary(self.name, 'description')
 
     def handel_received_data(self, data):
         """
         Handel received data
         :param data: data to be handeled
-        :return: Void
+        :return: void
         """
-        if data['type'] == 'gauge':
-            self.prometheus_client.set(data['data']['value'])
-        elif data['type'] == 'counter':
-            self.prometheus_client.inc(data['data']['value'])
-        elif data['type'] == 'histogram':
-            self.prometheus_client.observe(data['data']['value'])
-        elif data['type'] == 'summary':
-            self.prometheus_client.observe(data['data']['value'])
+        raw_data = data['data']
+        agent_name = data['name']
+        hostname = raw_data['hostname']
+        cpu_count.labels(f"{agent_name}:{hostname}").set(raw_data['cpu_count'])
+        cpu_usage.labels(f"{agent_name}:{hostname}").set(raw_data['cpu_percent'])
+        memory_usage.labels(f"{agent_name}:{hostname}").set(raw_data['memory_percent'])
+        disk_usage.labels(f"{agent_name}:{hostname}").set(raw_data['disk_percent'])
 
 
 class Server:
@@ -82,7 +80,7 @@ class Server:
             initial_data = json.loads(self.conn.recv(1024).decode('utf-8'))
 
             # create client object
-            client = Client(initial_data, self.conn, self.addr)
+            client = Client(self.conn, self.addr)
             # add client to list of clients
             self.clients.append(client)
 
@@ -105,7 +103,7 @@ class Server:
                 data = client.conn.recv(1024)
             except ConnectionResetError:
                 self.log(f"Client {client.addr} disconnected")
-                self.clients.remove(client.conn)
+                self.clients.remove(client)
                 break
             if not data:
                 break
